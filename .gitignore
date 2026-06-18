@@ -1,0 +1,7 @@
+build/
+synth/output/
+*.vcd
+*.vpd
+*.fsdb
+a.out
+reports/lint.rpt

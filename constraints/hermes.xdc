@@ -1,0 +1,6 @@
+create_clock -period 10.000 -name sys_clk [get_ports clk]
+set_clock_uncertainty 0.500 [get_clocks sys_clk]
+set_input_delay -clock sys_clk -max 4.000 [all_inputs]
+set_output_delay -clock sys_clk -max 4.000 [all_outputs]
+set_false_path -from [get_clocks sys_clk] -to [get_pins -hierarchical *gbl_reset*]
+set_max_fanout 32 [current_design]
