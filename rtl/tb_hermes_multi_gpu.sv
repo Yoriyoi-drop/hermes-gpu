@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 `define HERMES_DEBUG
 
-module tb_hermes_gpu;
+module tb_hermes_multi_gpu;
 
   import hermes_pkg::*;
 
@@ -18,7 +18,7 @@ module tb_hermes_gpu;
   logic        axi_awready, axi_arready, axi_wready, axi_rvalid, axi_bvalid;
   logic [511:0] axi_wdata, axi_rdata;
 
-  hermes_gpu u_dut (
+  hermes_multi_gpu u_dut (
     .clk            (clk),
     .rst_n          (rst_n),
     .host_start     (host_start),
@@ -82,10 +82,6 @@ module tb_hermes_gpu;
     //   R10 = R9+B = 3.0+2.0 = 5.0 (0x4500)
     // ================================================================
 
-    // Instructions at 0x1000, packed 8 per 512-bit DRAM word.
-    // PC increments by 8. Instruction at addr X is at DRAM[X>>6] bits [(X&63)*8 +: 64].
-    // For PC=0x1000: DRAM[64][63:0], PC=0x1008: DRAM[64][127:64], etc.
-
     dram[64] = {
       encode_instr(OP_LD,   5'd9, 5'd0, 5'd0, 32'h00004000),  // 0x1038 [511:448] LD R9,[0x4000]
       encode_instr(OP_ST,   5'd5, 5'd0, 5'd0, 32'h00004000),  // 0x1030 [447:384] ST R5,[0x4000]
@@ -107,26 +103,28 @@ module tb_hermes_gpu;
 
     // ================================================================
     // Kernel 2: Tensor MMA Suite (at 0x2000)
-    // Tests basic MMA opcode dispatch and tensor core FSM
     // ================================================================
     dram[128] = {
-      encode_instr(OP_EXIT, 5'd0, 5'd0, 5'd0, 32'h0),         // 0x2038
-      encode_instr(OP_MMA,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2030 MMA
-      256'h0,                                                   // unused
-      encode_instr(OP_SMOV, 5'd1, 5'd0, 5'd0, 32'h0),         // 0x2000 SMOV R1,0
-      encode_instr(OP_SMOV, 5'd0, 5'd0, 5'd0, 32'h0)          // 0x2008 SMOV R0,0
+      encode_instr(OP_EXIT, 5'd0, 5'd0, 5'd0, 32'h0),         // 0x2038 [511:448]
+      encode_instr(OP_MMA,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2030 [447:384]
+      encode_instr(OP_NOP,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2028 [383:320]
+      encode_instr(OP_NOP,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2020 [319:256]
+      encode_instr(OP_NOP,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2018 [255:192]
+      encode_instr(OP_NOP,  5'd0, 5'd0, 5'd0, 32'h0),         // 0x2010 [191:128]
+      encode_instr(OP_SMOV, 5'd0, 5'd0, 5'd0, 32'h0),         // 0x2008 [127:64]
+      encode_instr(OP_SMOV, 5'd1, 5'd0, 5'd0, 32'h0)          // 0x2000 [63:0]
     };
 
     // --- DATA arrays ---
-    // A[i] = 1.0 FP16 (16'h3C00) at 0x2000
+    // A[i] = 1.0 FP16 at 0x2000
     for (int i = 0; i < 32; i++)
       dram[32'h2000 >> 6][i*16 +: 16] = 16'h3C00;
 
-    // B[i] = 2.0 FP16 (16'h4000) at 0x3000
+    // B[i] = 2.0 FP16 at 0x3000
     for (int i = 0; i < 32; i++)
       dram[32'h3000 >> 6][i*16 +: 16] = 16'h4000;
 
-    // C (output) at 0x4000 — already zero
+    // C (output) at 0x4000
   end
 
   // AXI read response
@@ -174,38 +172,38 @@ module tb_hermes_gpu;
   // Test Sequence
   // ================================================================
   logic all_ok;
+  integer test_num;
 
-  function automatic integer check_lanes(input integer w, input integer r, input [15:0] e);
-    check_lanes = 0;
+  // Access core 0's register file via generate block path
+  function automatic integer check_lanes_core0(input integer w, input integer r, input [15:0] e);
+    check_lanes_core0 = 0;
     for (integer l = 0; l < 32; l++) begin
-      if (u_dut.u_regfile.regs[w][r][l] !== e) begin
-        if (check_lanes == 0)
-          $display("    FAIL warp%0d[%0d]: lane %0d got 16'h%04x != 16'h%04x", w, r, l, u_dut.u_regfile.regs[w][r][l], e);
-        check_lanes = 1;
+      if (u_dut.core[0].u_core.u_regfile.regs[w][r][l] !== e) begin
+        if (check_lanes_core0 == 0)
+          $display("    FAIL core0 warp%0d[%0d]: lane %0d got 16'h%04x != 16'h%04x", w, r, l, u_dut.core[0].u_core.u_regfile.regs[w][r][l], e);
+        check_lanes_core0 = 1;
       end
     end
   endfunction
 
   initial begin
-    $display("========================================");
-    $display("  Hermes GPU Testbench");
-    $display("  AI-Focused High-Compute GPU");
-    $display("  FP16 / BF16 / INT8 Support");
+    $display("==========================================");
+    $display("  Hermes GPU — Multi-Core Testbench");
+    $display("  %0d Cores, %0d Warps/Core", NUM_CORES, NUM_WARPS);
     $display("  32x32 Systolic Array (1024 MACs)");
-    $display("  8 Warp SIMT Pipeline");
-    $display("========================================");
+    $display("==========================================");
     $display("");
 
     clk    = 0;
     rst_n  = 0;
-    host_start      = 0;
+    host_start       = 0;
     host_kernel_addr = 32'h1000;
-    host_arg_a      = 32'h2000;
-    host_arg_b      = 32'h3000;
-    host_arg_c      = 32'h4000;
-    host_data_fmt   = FP16;
-    host_grid_dim_x = 1;
-    host_grid_dim_y = 1;
+    host_arg_a       = 32'h2000;
+    host_arg_b       = 32'h3000;
+    host_arg_c       = 32'h4000;
+    host_data_fmt    = FP16;
+    host_grid_dim_x  = 1;
+    host_grid_dim_y  = 1;
 
     #10 rst_n = 1;
     #10;
@@ -213,25 +211,26 @@ module tb_hermes_gpu;
     $display("[%0t] Reset complete", $time);
 
     // ========================================
-    // Test 1: Vector Kernel
+    // Test 1: Vector Kernel (single CTA on core 0)
     // ========================================
-    $display("[%0t] Test 1: Launching vector kernel...", $time);
+    test_num = 1;
+    $display("[%0t] Test %0d: Launching vector kernel (grid=%dx%d)...", $time, test_num, host_grid_dim_x, host_grid_dim_y);
     host_start = 1;
     #2 host_start = 0;
 
-    #500;
+    #800;
 
-    $display("[%0t] Test 1: Verifying vector kernel results...", $time);
+    $display("[%0t] Test %0d: Verifying vector kernel results...", $time, test_num);
     all_ok = 1'b1;
 
-    all_ok = all_ok && !check_lanes(0, 3, 16'h3C00);
-    all_ok = all_ok && !check_lanes(0, 4, 16'h4000);
-    all_ok = all_ok && !check_lanes(0, 5, 16'h4200);
-    all_ok = all_ok && !check_lanes(0, 6, 16'hBC00);
-    all_ok = all_ok && !check_lanes(0, 7, 16'h4000);
-    all_ok = all_ok && !check_lanes(0, 8, 16'h0000);
-    all_ok = all_ok && !check_lanes(0, 9, 16'h4200);
-    all_ok = all_ok && !check_lanes(0, 10, 16'h4500);
+    all_ok = all_ok && !check_lanes_core0(0, 3,  16'h3C00);
+    all_ok = all_ok && !check_lanes_core0(0, 4,  16'h4000);
+    all_ok = all_ok && !check_lanes_core0(0, 5,  16'h4200);
+    all_ok = all_ok && !check_lanes_core0(0, 6,  16'hBC00);
+    all_ok = all_ok && !check_lanes_core0(0, 7,  16'h4000);
+    all_ok = all_ok && !check_lanes_core0(0, 8,  16'h0000);
+    all_ok = all_ok && !check_lanes_core0(0, 9,  16'h4200);
+    all_ok = all_ok && !check_lanes_core0(0, 10, 16'h4500);
 
     if (all_ok)
       $display("[%0t] === VECTOR KERNEL PASSED ====", $time);
@@ -239,37 +238,53 @@ module tb_hermes_gpu;
       $display("[%0t] === VECTOR KERNEL FAILED ====", $time);
 
     // ========================================
-    // Test 2: Tensor MMA Kernel
+    // Test 2: Tensor MMA Kernel on core 0
     // ========================================
-    $display("[%0t] Test 2: Launching MMA kernel...", $time);
+    test_num = 2;
+    $display("[%0t] Test %0d: Launching MMA kernel...", $time, test_num);
     host_kernel_addr = 32'h2000;
     host_start = 1;
     #2 host_start = 0;
 
     #800;
 
-    if (u_dut.perf_tc_cnt > 0)
-      $display("[%0t] === MMA KERNEL PASSED (tc_cnt=%0d) ====", $time, u_dut.perf_tc_cnt);
+    if (u_dut.core[0].u_core.perf_tc_cnt > 0)
+      $display("[%0t] === MMA KERNEL PASSED (tc_cnt=%0d) ====", $time, u_dut.core[0].u_core.perf_tc_cnt);
     else
       $display("[%0t] === MMA KERNEL FAILED (tc_cnt=0) ====", $time);
+
+    // ========================================
+    // Test 3: Multi-core — launch with grid_dim_x=2
+    // ========================================
+    test_num = 3;
+    host_grid_dim_x = 2;
+    host_grid_dim_y = 1;
+    host_kernel_addr = 32'h1000;
+    $display("[%0t] Test %0d: Multi-core launch (grid=%dx%d)...", $time, test_num, host_grid_dim_x, host_grid_dim_y);
+    host_start = 1;
+    #2 host_start = 0;
+
+    #800;
+
+    if (u_dut.host_done)
+      $display("[%0t] === MULTI-CORE LAUNCH PASSED (host_done) ====", $time);
+    else
+      $display("[%0t] === MULTI-CORE LAUNCH FAILED ====", $time);
 
     // ========================================
     // Summary
     // ========================================
     $display("");
-    $display("--- Performance Counters ---");
-    $display("  Instructions:  %0d", u_dut.perf_instr_cnt);
-    $display("  Loads:         %0d", u_dut.perf_ld_cnt);
-    $display("  Stores:        %0d", u_dut.perf_st_cnt);
-    $display("  Vector ops:    %0d", u_dut.perf_vec_cnt);
-    $display("  Tensor ops:    %0d", u_dut.perf_tc_cnt);
-    $display("  Branches:      %0d", u_dut.perf_branch_cnt);
-    $display("  L1 hits:       %0d", u_dut.perf_l1_hits);
-    $display("  L1 misses:     %0d", u_dut.perf_l1_misses);
-    $display("  L2 hits:       %0d", u_dut.perf_l2_hits);
-    $display("  L2 misses:     %0d", u_dut.perf_l2_misses);
-    $display("  Total cycles:  %0d", u_dut.perf_warp_total);
-    $display("  Active cycles: %0d", u_dut.perf_warp_active);
+    $display("--- Performance Counters (Core 0) ---");
+    $display("  Instructions:  %0d", u_dut.core[0].u_core.perf_instr_cnt);
+    $display("  Loads:         %0d", u_dut.core[0].u_core.perf_ld_cnt);
+    $display("  Stores:        %0d", u_dut.core[0].u_core.perf_st_cnt);
+    $display("  Vector ops:    %0d", u_dut.core[0].u_core.perf_vec_cnt);
+    $display("  Tensor ops:    %0d", u_dut.core[0].u_core.perf_tc_cnt);
+    $display("  Branches:      %0d", u_dut.core[0].u_core.perf_branch_cnt);
+    $display("  L1 hits:       %0d", u_dut.core[0].u_core.perf_l1_hits);
+    $display("  L1 misses:     %0d", u_dut.core[0].u_core.perf_l1_misses);
+    $display("  Active cycles: %0d", u_dut.core[0].u_core.perf_warp_active);
 
     $display("");
     if (all_ok)
@@ -282,16 +297,15 @@ module tb_hermes_gpu;
   // Debug monitor
   initial begin
 `ifdef HERMES_DEBUG
-    $monitor("[%0t] state=%s warp=%d pc=%h",
+    $monitor("[%0t] state=%s host_done=%b",
              $time,
-             u_dut.gpu_state.name(),
-             u_dut.scheduled_warp,
-             u_dut.warp_pc[u_dut.scheduled_warp]);
+             u_dut.u_wd.state.name(),
+             host_done);
 `endif
   end
 
   initial begin
-    #2000;
+    #4000;
     $display("[%0t] TIMEOUT: Simulation did not complete", $time);
     $finish;
   end
@@ -299,9 +313,5 @@ module tb_hermes_gpu;
 endmodule
 
 module v;
-  tb_hermes_gpu u_tb();
-endmodule
-
-module v;
-  tb_hermes_gpu u_tb();
+  tb_hermes_multi_gpu u_tb();
 endmodule

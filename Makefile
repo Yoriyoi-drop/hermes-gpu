@@ -19,8 +19,8 @@ REPORT_DIR := reports
 SVH_FILES  := $(wildcard $(RTL_DIR)/*.svh)
 SV_FILES   := $(wildcard $(RTL_DIR)/*.sv)
 PKG_FILES  := $(RTL_DIR)/hermes_pkg.sv
-RTL_FILES  := $(filter-out $(PKG_FILES) $(RTL_DIR)/tb_% $(RTL_DIR)/memory_controller.sv,$(SV_FILES))
-TB_FILES   := $(RTL_DIR)/tb_hermes_gpu.sv
+RTL_FILES  := $(filter-out $(PKG_FILES) $(RTL_DIR)/tb_%,$(SV_FILES))
+TB_FILES   := $(RTL_DIR)/tb_hermes_multi_gpu.sv
 ALL_SRC    := $(SVH_FILES) $(SV_FILES)
 
 # --- Outputs ---
@@ -29,7 +29,7 @@ VLT_OBJ_DIR := $(BUILD_DIR)/obj_vlt
 
 # --- Flags ---
 IVERILOG_FLAGS  := -g2012 -sv -Wall -s v
-VERILATOR_FLAGS := --lint-only --top-module hermes_gpu -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CASEINCOMPLETE -Wno-MULTITOP -Wno-LATCH -sv +incdir+$(RTL_DIR)
+VERILATOR_FLAGS := --lint-only --top-module hermes_multi_gpu -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CASEINCOMPLETE -Wno-MULTITOP -sv +incdir+$(RTL_DIR)
 
 # ============================================================
 # Targets
@@ -76,12 +76,13 @@ $(BUILD_DIR) $(REPORT_DIR):
 lint: | $(REPORT_DIR)
 	@echo "[HERMES] Linting all RTL with Verilator..."
 	@$(VERILATOR) $(VERILATOR_FLAGS) \
-		$(PKG_FILES) $(RTL_FILES) 2>&1 | tee $(LINT_LOG)
-	@if [ -s $(LINT_LOG) ]; then \
-		echo "[HERMES] Lint: PASSED (warnings in $(LINT_LOG))"; \
-	else \
-		echo "[HERMES] Lint: PASSED"; \
-	fi
+		$(PKG_FILES) $(RTL_FILES) 2>&1 | tee $(LINT_LOG); \
+		if [ $${PIPESTATUS[0]} -eq 0 ]; then \
+			echo "[HERMES] Lint: PASSED"; \
+		else \
+			echo "[HERMES] Lint: FAILED (see $(LINT_LOG))"; \
+			exit 1; \
+		fi
 
 .PHONY: lint-strict
 lint-strict: | $(REPORT_DIR)
@@ -108,13 +109,13 @@ build-icarus: | $(BUILD_DIR)
 build-vlt: | $(BUILD_DIR)
 	@echo "[HERMES] Building C++ simulation with Verilator..."
 	$(VERILATOR) -sv --timing --trace --cc --exe --build \
-		--top-module tb_hermes_gpu \
+		--top-module tb_hermes_multi_gpu \
 		-Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CASEINCOMPLETE \
-		-Wno-TIMESCALEMOD -Wno-MULTITOP -Wno-fatal \
+		-Wno-TIMESCALEMOD -Wno-MULTITOP -Wno-UNOPTFLAT \
 		+incdir+$(RTL_DIR) \
 		$(PKG_FILES) $(RTL_FILES) $(TB_FILES) $(CURDIR)/sim_main.cpp \
 		--Mdir $(VLT_OBJ_DIR) \
-		-o ../Vtb_hermes_gpu 2>&1
+		-o ../Vtb_hermes_multi_gpu 2>&1
 	@echo "[HERMES] Verilator build: DONE"
 
 # ============================================================
@@ -124,7 +125,7 @@ build-vlt: | $(BUILD_DIR)
 .PHONY: sim
 sim: build-vlt
 	@echo "[HERMES] Running Hermes GPU simulation..."
-	$(BUILD_DIR)/Vtb_hermes_gpu
+	$(BUILD_DIR)/Vtb_hermes_multi_gpu
 
 .PHONY: run
 run: sim
@@ -159,7 +160,7 @@ fpga-clean:
 .PHONY: wave
 wave: clean-vcd build-vlt
 	@echo "[HERMES] Running simulation for waveform..."
-	$(BUILD_DIR)/Vtb_hermes_gpu
+	$(BUILD_DIR)/Vtb_hermes_multi_gpu
 	@if command -v gtkwave >/dev/null 2>&1; then \
 		gtkwave hermes_gpu.vcd; \
 	elif command -v surfviz >/dev/null 2>&1; then \

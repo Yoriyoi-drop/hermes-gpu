@@ -1,5 +1,5 @@
-// Verilator C++ wrapper for Hermes GPU — with VCD waveform tracing
-#include "Vtb_hermes_gpu.h"
+// Verilator C++ wrapper for Hermes GPU (Multi-Core) — with VCD waveform tracing
+#include "Vtb_hermes_multi_gpu.h"
 #include "verilated.h"
 #include "verilated_vcd_c.h"
 #include <cstdio>
@@ -16,12 +16,12 @@ int main(int argc, char** argv) {
   // Enable VCD trace
   Verilated::traceEverOn(true);
 
-  Vtb_hermes_gpu* dut = new Vtb_hermes_gpu;
+  Vtb_hermes_multi_gpu* dut = new Vtb_hermes_multi_gpu;
   VerilatedVcdC* trace = new VerilatedVcdC;
   dut->trace(trace, 99);
   trace->open("hermes_gpu.vcd");
 
-  const vluint64_t max_time = 2000000;
+  const vluint64_t max_time = 4000000;
 
   while (!Verilated::gotFinish() && main_time < max_time) {
     dut->eval();

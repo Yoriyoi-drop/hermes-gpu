@@ -129,7 +129,7 @@ module tensor_core (
         end
 
         DRAIN: begin
-          if (sa_done) begin
+          if (sa_output_valid) begin
             for (int c = 0; c < 32; c++)
               c_sram[{row_cnt, c[4:0]}] <= psum_out[c];
             row_cnt <= row_cnt + 1'b1;
@@ -167,7 +167,7 @@ module tensor_core (
       end
 
       DRAIN: begin
-        if (sa_done && row_cnt == 5'd31)
+        if (sa_done)
           next = MMA_DONE;
       end
 

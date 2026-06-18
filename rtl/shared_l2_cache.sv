@@ -1,7 +1,7 @@
 `include "hermes_defines.svh"
 import hermes_pkg::*;
 
-module l2_cache (
+module shared_l2_cache (
   input  logic        clk,
   input  logic        rst_n,
   input  logic        req_valid,
@@ -96,10 +96,6 @@ module l2_cache (
         IDLE: begin
           dram_rready <= '0;
           req_rvalid <= '0;
-          if (req_valid) begin
-            `HERMES_DBG(("[%0t] L2_IDLE: req_valid=1 addr=%h tag=%h idx=%h cache_hit=%b miss_pending=%b",
-                     $time, req_addr, req_tag, req_index, cache_hit, miss_pending));
-          end
           if (req_valid && cache_hit) begin
             if (req_write) begin
               data[req_index][hit_way] <= req_wdata;
@@ -111,8 +107,6 @@ module l2_cache (
             hits <= hits + 1'b1;
             req_rvalid <= 1'b1;
           end else if (req_valid && !cache_hit && !miss_pending) begin
-            `HERMES_DBG(("[%0t] L2_MISS: addr=%h tag=%h idx=%h dram_araddr=%h",
-                     $time, req_addr, req_tag, req_index, {req_tag, req_index, 6'b0}));
             miss_pending <= 1'b1;
             misses <= misses + 1'b1;
             if (dirty[req_index][lru_way]) begin
@@ -153,8 +147,6 @@ module l2_cache (
         READ_MISS: begin
           dram_rready <= 1'b1;
           if (dram_rvalid && dram_rready) begin
-            `HERMES_DBG(("[%0t] L2 FILL: addr=%h tag=%h idx=%h way=%0d data[63:0]=%h",
-                     $time, {req_tag, req_index, 6'b0}, req_tag, req_index, lru_way, dram_rdata[63:0]));
             data[req_index][lru_way]  <= dram_rdata;
             tag[req_index][lru_way]   <= req_tag;
             valid[req_index][lru_way] <= 1'b1;

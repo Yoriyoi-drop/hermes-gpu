@@ -60,12 +60,29 @@ package hermes_pkg;
   // ============================================================
   localparam int WARP_SIZE       = 32;
   localparam int NUM_WARPS       = 8;
+  localparam int NUM_CORES       = 2;
   localparam int SYSTOLIC_SIZE   = 32;
   localparam int REGS_PER_WARP   = 1024;
   localparam int REG_BANKS       = 32;
 
   localparam int SYS_ADDR_W      = 32;
   localparam int DATA_W          = 16;
+
+  // ============================================================
+  // Multi-Core Types
+  // ============================================================
+  typedef logic [3:0] core_id_t;
+
+  typedef struct packed {
+    logic        valid;
+    core_id_t    core_id;
+    logic [SYS_ADDR_W-1:0] kernel_addr;
+    logic [31:0] arg_a, arg_b, arg_c;
+    data_format_e fmt;
+    logic [31:0] grid_dim_x, grid_dim_y;
+    logic [31:0] cta_start_x, cta_start_y;
+    logic [31:0] num_ctas;
+  } workgroup_desc_t;
 
   // ============================================================
   // Parameters — Shared Memory
